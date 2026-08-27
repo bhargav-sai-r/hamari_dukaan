@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Hamari Dukaan — Owner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+
+<!-- PWA: makes this page installable ("Add to Home Screen") as the OWNER app -->
+<link rel="manifest" href="manifest-owner.json">
+<meta name="theme-color" content="#0095F6">
+<link rel="icon" href="assets/icons/owner-192.png">
+<link rel="apple-touch-icon" href="assets/icons/owner-apple-touch.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Dukaan Owner">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<!-- Supabase client library (only used once you paste in your project's URL + key in assets/config.js; harmless if left unconfigured) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<div id="overlayRoot"></div>
+
+<!-- Load order matters: config -> i18n -> common -> api -> owner -->
+<script src="assets/config.js"></script>
+<script src="assets/i18n.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/owner.js"></script>
+
+<!-- Registers the offline/installable app-shell cache (sw.js at the site root). Safe to leave in even before you deploy to GitHub Pages. -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function (err) {
+      console.warn('Service worker registration failed (app still works online):', err);
+    });
+  });
+}
+</script>
+
+</body>
+</html>
