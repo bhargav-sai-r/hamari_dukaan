@@ -22,7 +22,8 @@
       placeholderPhoto = C.placeholderPhoto, disableWheelChange = C.disableWheelChange,
       toast = C.toast, matchScore = C.matchScore, fieldTemplate = C.fieldTemplate,
       paginate = C.paginate, pagerRow = C.pagerRow, showConfirm = C.showConfirm, normalizePhone = C.normalizePhone,
-      validatePhone = C.validatePhone, phoneErrorKey = C.phoneErrorKey;
+      validatePhone = C.validatePhone, phoneErrorKey = C.phoneErrorKey,
+      compressImage = C.compressImage, showModal = C.showModal, showActionSheet = C.showActionSheet;
 
   // ---------------- state ----------------
   function blank() {
@@ -52,6 +53,7 @@
   var navStack = [];
   var pendingPhoto = null;
   var original = null;
+  var itemFooterEl = null; // the item screen's fixed Save/Close bar — built inside renderItem(), appended by render()
 
   function filteredSkus(q) {
     var scored = S.skus.map(function (s) { return { s: s, score: matchScore(q, s.name + ' ' + s.description) }; });
@@ -135,6 +137,11 @@
     if (chrome && S.session && (route === 'catalogue' || route === 'receiveStock' || route === 'workers')) {
       app.appendChild(renderTabbar());
     }
+    // Item screen has its own fixed Save/Close bar instead of the tabbar —
+    // renderItem() (called above via renderRoute()) builds it and stashes
+    // it in itemFooterEl so it can be appended after .main, same pattern
+    // as the tabbar.
+    if (chrome && route === 'item' && itemFooterEl) app.appendChild(itemFooterEl);
   }
 
   function langToggle() {
@@ -570,8 +577,8 @@
   function openItem(id, context, prefillName) {
     var s = id ? findSku(id) : null;
     pendingPhoto = s ? s.photo : null;
-    original = s ? { name: s.name, description: s.description, unit: s.unit, qty: s.qty, cost: s.cost, sell: s.sell, photo: s.photo }
-                 : { name: prefillName || '', description: '', unit: 'piece', qty: '', cost: '', sell: '', photo: null };
+    original = s ? { name: s.name, description: s.description, unit: s.unit, qty: s.qty, cost: s.cost, sell: s.sell, photo: s.photo, supplier: s.lastSupplier || '' }
+                 : { name: prefillName || '', description: '', unit: 'piece', qty: '', cost: '', sell: '', photo: null, supplier: '' };
     go('item', { editingId: id || null, context: context, prefillName: prefillName || '' });
   }
 
@@ -591,16 +598,40 @@
     var galleryInput = el('<input type="file" accept="image/*" style="display:none;">');
     function handlePhotoFile(ev) {
       var file = ev.target.files[0]; if (!file) return;
-      var reader = new FileReader();
-      reader.onload = function (e) {
-        pendingPhoto = e.target.result;
+      // Resize + recompress to a JPEG before it ever becomes a stored data
+      // URL — this is what keeps product photos from bloating the database.
+      // Falls back to the original raw-file behaviour if compression fails
+      // for any reason (unsupported format, canvas error, etc.) so a photo
+      // can still always be added.
+      compressImage(file, 800, 0.75).then(function (dataUrl) {
+        pendingPhoto = dataUrl;
         document.getElementById('photoTile').innerHTML = '<img src="' + pendingPhoto + '"><span class="retake">' + esc(t('retakeLabel')) + '</span>';
-      };
-      reader.readAsDataURL(file);
+        checkDirty();
+      }).catch(function () {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+          pendingPhoto = e.target.result;
+          document.getElementById('photoTile').innerHTML = '<img src="' + pendingPhoto + '"><span class="retake">' + esc(t('retakeLabel')) + '</span>';
+          checkDirty();
+        };
+        reader.readAsDataURL(file);
+      });
     }
     cameraInput.onchange = handlePhotoFile;
     galleryInput.onchange = handlePhotoFile;
-    photoTile.onclick = function () { cameraInput.click(); };
+    // One tap on the photo covers both "take a new photo" and "pick an
+    // existing one" — a small popup asks which, instead of a separate tap
+    // target + text link for each (fewer distinct things to figure out).
+    photoTile.onclick = function () {
+      showActionSheet({
+        title: t('addPhotoTitle'),
+        cancelLabel: t('cancelBtn'),
+        actions: [
+          { icon: '📷', label: t('takePhotoOption'), onClick: function () { cameraInput.click(); } },
+          { icon: '🖼', label: t('chooseFromGallery'), onClick: function () { galleryInput.click(); } }
+        ]
+      });
+    };
     photoRow.appendChild(photoTile);
     photoRow.appendChild(cameraInput);
     photoRow.appendChild(galleryInput);
@@ -613,39 +644,30 @@
     photoRow.appendChild(nameBox);
     wrap.appendChild(photoRow);
 
-    var galleryLink = el('<button type="button" class="gallery-link">' + esc(t('chooseFromGallery')) + '</button>');
-    galleryLink.onclick = function () { galleryInput.click(); };
-    wrap.appendChild(galleryLink);
-
-    // history on top (existing items only) — collapsible, latest first, max 3
+    // history — a single bright button instead of an always-open block, so
+    // it doesn't push the rest of the form down. Tapping it opens a
+    // view-only popup with the same last-3 entries; only shown once a
+    // product actually has history.
     if (!isNew) {
-      var histExpanded = true;
-      var histBlock = el('<div class="history-block"></div>');
-      var histHeader = el('<div class="history-header"><div class="list-caption" style="margin-top:0;">' + esc(t('historyHeading')) + '</div><span class="chev">▾</span></div>');
-      var histRowsWrap = el('<div style="display:flex;flex-direction:column;gap:8px;"></div>');
-      var hist = s.history.slice(0, 3);
-      if (!hist.length) {
-        histRowsWrap.appendChild(el('<div style="font-size:13px;color:var(--ink-muted);">' + esc(t('noHistory')) + '</div>'));
-      } else {
-        hist.forEach(function (h) {
-          histRowsWrap.appendChild(el(
-            '<div class="history-row"><div class="when">' + fmtWhen(h.when) + (h.supplier ? ' · ' + esc(h.supplier) : '') + '</div>' +
-            '<div class="history-grid">' +
-              '<div class="cell"><div class="k">' + esc(t('qtyLabel')) + '</div><div class="v">' + qtyLabel(h.qty, s.unit) + '</div></div>' +
-              '<div class="cell"><div class="k">' + esc(t('costLabel')) + '</div><div class="v">' + money(h.cost) + '</div></div>' +
-              '<div class="cell"><div class="k">' + esc(t('sellLabel')) + '</div><div class="v">' + money(h.sell) + '</div></div>' +
-            '</div></div>'
-          ));
-        });
-      }
-      histHeader.onclick = function () {
-        histExpanded = !histExpanded;
-        histRowsWrap.style.display = histExpanded ? 'flex' : 'none';
-        histHeader.querySelector('.chev').style.transform = histExpanded ? 'rotate(0deg)' : 'rotate(-90deg)';
+      var histBtn = el('<button type="button" class="btn btn-yellow btn-block">🕒 ' + esc(t('historyBtnLabel')) + '</button>');
+      histBtn.onclick = function () {
+        var hist = s.history.slice(0, 3);
+        var bodyHtml;
+        if (!hist.length) {
+          bodyHtml = '<div style="font-size:13px;color:var(--ink-muted);">' + esc(t('noHistory')) + '</div>';
+        } else {
+          bodyHtml = hist.map(function (h) {
+            return '<div class="history-row"><div class="when">' + fmtWhen(h.when) + (h.supplier ? ' · ' + esc(h.supplier) : '') + '</div>' +
+              '<div class="history-grid">' +
+                '<div class="cell"><div class="k">' + esc(t('qtyLabel')) + '</div><div class="v">' + qtyLabel(h.qty, s.unit) + '</div></div>' +
+                '<div class="cell"><div class="k">' + esc(t('costLabel')) + '</div><div class="v">' + money(h.cost) + '</div></div>' +
+                '<div class="cell"><div class="k">' + esc(t('sellLabel')) + '</div><div class="v">' + money(h.sell) + '</div></div>' +
+              '</div></div>';
+          }).join('');
+        }
+        showModal({ title: t('historyHeading'), bodyHtml: bodyHtml, closeLabel: t('closeBtn') });
       };
-      histBlock.appendChild(histHeader);
-      histBlock.appendChild(histRowsWrap);
-      wrap.appendChild(histBlock);
+      wrap.appendChild(histBtn);
     }
 
     // description
@@ -655,7 +677,7 @@
     var counter = el('<div class="counter">0/300</div>');
     function updateCounter() { var n = descArea.value.length; counter.textContent = n + '/300'; counter.classList.toggle('near-limit', n > 270); }
     updateCounter();
-    descArea.oninput = updateCounter;
+    descArea.oninput = function () { updateCounter(); checkDirty(); };
     descWrap.appendChild(descArea); descWrap.appendChild(counter);
     wrap.appendChild(descWrap);
 
@@ -670,7 +692,9 @@
     unitSel.value = s ? s.unit : 'piece';
     unitF.appendChild(unitSel);
     var qtyF = el('<div class="field"><label class="label">' + esc(isReceive ? t('qtyNowLabel') : t('qtyLabel')) + '</label></div>');
-    var qtyInp = el('<input class="input" type="number" step="0.01" min="0" placeholder="0">');
+    // inputmode="decimal" makes phones reliably show the number pad (with
+    // a decimal point) here instead of the full alphabet keyboard.
+    var qtyInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0">');
     qtyInp.value = s ? s.qty : '';
     qtyF.appendChild(qtyInp);
     row1.appendChild(unitF); row1.appendChild(qtyF);
@@ -679,11 +703,11 @@
     // cost + sell
     var row2 = el('<div class="row-2"></div>');
     var costF = el('<div class="field"><label class="label">' + esc(t('costLabel')) + '</label></div>');
-    var costInp = el('<input class="input" type="number" step="0.01" min="0" placeholder="₹">');
+    var costInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="₹">');
     costInp.value = s ? s.cost : '';
     costF.appendChild(costInp);
     var sellF = el('<div class="field"><label class="label">' + esc(t('sellLabel')) + '</label></div>');
-    var sellInp = el('<input class="input" type="number" step="0.01" min="0" placeholder="₹">');
+    var sellInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="₹">');
     sellInp.value = s ? s.sell : '';
     sellF.appendChild(sellInp);
     row2.appendChild(costF); row2.appendChild(sellF);
@@ -696,7 +720,6 @@
       var c = parseFloat(costInp.value), sl = parseFloat(sellInp.value);
       marginWarn.style.display = (!isNaN(c) && !isNaN(sl) && sl <= c) ? 'flex' : 'none';
     }
-    costInp.oninput = checkMargin; sellInp.oninput = checkMargin;
     checkMargin();
 
     // margin stat (existing items)
@@ -724,29 +747,46 @@
     var formErr = el('<div class="banner banner-danger" style="display:none;"></div>');
     wrap.appendChild(formErr);
 
-    // actions: Save / Cancel / Back
-    var actions = el('<div class="btn-row"></div>');
-    var saveBtn = el('<button class="btn btn-primary">' + esc(isReceive ? t('saveUpdateStockBtn') : t('saveBtn')) + '</button>');
-    var cancelBtn = el('<button class="btn btn-ghost">' + esc(t('cancelBtn')) + '</button>');
-    var backBtn = el('<button class="btn btn-outline">' + esc(t('backBtn')) + '</button>');
-    actions.appendChild(saveBtn); actions.appendChild(cancelBtn); actions.appendChild(backBtn);
-    wrap.appendChild(actions);
+    // ---- fixed bottom bar: one green Save + one round Close (✕) ----
+    // Replaces the old Save/Cancel/Back row. Save stays greyed out until
+    // something on the screen actually changes; Close always confirms
+    // before leaving, since there's no separate Cancel/revert control any
+    // more. Built here (not appended into `wrap`) — render() pulls it out
+    // via itemFooterEl and pins it to the bottom of the screen so it's
+    // always reachable without scrolling.
+    var footer = el('<div class="item-footer"></div>');
+    var saveBtn = el('<button type="button" class="footer-save-btn" disabled>' + esc(isReceive ? t('saveUpdateStockBtn') : t('saveBtn')) + '</button>');
+    var closeXBtn = el('<button type="button" class="footer-close-btn"><span class="fc-x">✕</span><span class="fc-lbl">' + esc(t('closeBtn')) + '</span></button>');
+    footer.appendChild(saveBtn); footer.appendChild(closeXBtn);
+    itemFooterEl = footer;
 
-    cancelBtn.onclick = function () {
-      nameInput.value = original.name;
-      descArea.value = original.description; updateCounter();
-      unitSel.value = original.unit;
-      qtyInp.value = original.qty;
-      costInp.value = original.cost;
-      sellInp.value = original.sell;
-      pendingPhoto = original.photo;
-      document.getElementById('photoTile').innerHTML = pendingPhoto ?
-        '<img src="' + pendingPhoto + '"><span class="retake">' + esc(t('retakeLabel')) + '</span>' :
-        '<div class="camicon">📷</div><div>' + esc(t('emptyPhotoAlt')) + '</div>';
-      checkMargin();
-      formErr.style.display = 'none';
+    function checkDirty() {
+      var d = nameInput.value !== original.name ||
+        descArea.value !== original.description ||
+        unitSel.value !== original.unit ||
+        String(qtyInp.value) !== String(original.qty) ||
+        String(costInp.value) !== String(original.cost) ||
+        String(sellInp.value) !== String(original.sell) ||
+        pendingPhoto !== original.photo ||
+        (supplierInp ? supplierInp.value !== (original.supplier || '') : false);
+      saveBtn.disabled = !d;
+      return d;
+    }
+    nameInput.oninput = checkDirty;
+    unitSel.onchange = checkDirty;
+    qtyInp.oninput = checkDirty;
+    costInp.oninput = function () { checkMargin(); checkDirty(); };
+    sellInp.oninput = function () { checkMargin(); checkDirty(); };
+    if (supplierInp) supplierInp.oninput = checkDirty;
+    checkDirty(); // starts disabled — nothing's been changed yet
+
+    closeXBtn.onclick = function () {
+      showConfirm({
+        title: t('discardConfirmTitle'), body: t('discardConfirmBody'),
+        confirmLabel: t('discardConfirmYes'), cancelLabel: t('cancelBtn'), danger: true,
+        onConfirm: function () { go(isReceive ? 'receiveStock' : 'catalogue'); }
+      });
     };
-    backBtn.onclick = function () { go(isReceive ? 'receiveStock' : 'catalogue'); };
 
     saveBtn.onclick = function () {
       var name = nameInput.value.trim();
@@ -756,7 +796,11 @@
       var now = new Date();
       var supplierVal = supplierInp ? supplierInp.value.trim() : '';
       var histEntry = { when: now, qty: qty, cost: cost, sell: sell, supplier: supplierVal };
-      var newHistory = [histEntry].concat(isNew ? [] : s.history);
+      // Keep only the most recent 3 entries — the UI only ever shows the
+      // last 3 anyway, and letting this grow forever was quietly bloating
+      // every product's row (and the database's overall size) with price
+      // history nobody could see.
+      var newHistory = [histEntry].concat(isNew ? [] : s.history).slice(0, 3);
       var fields = { name: name, description: descArea.value.trim(), photo: pendingPhoto || (s ? s.photo : placeholderPhoto()),
         unit: unitSel.value, qty: qty, cost: cost, sell: sell, lastSupplier: supplierVal || (s ? s.lastSupplier : ''), history: newHistory };
 
@@ -779,7 +823,7 @@
         return;
       }
 
-      saveBtn.disabled = true; cancelBtn.disabled = true; backBtn.disabled = true;
+      saveBtn.disabled = true; closeXBtn.disabled = true;
       saveBtn.textContent = t('savingText');
       api.insertSku(S.storeId, fields).then(function (saved) {
         S.skus.push(saved);
@@ -795,7 +839,8 @@
       }).catch(function () {
         formErr.textContent = '⚠ ' + t('genericError');
         formErr.style.display = 'flex';
-        saveBtn.disabled = false; cancelBtn.disabled = false; backBtn.disabled = false;
+        closeXBtn.disabled = false;
+        saveBtn.disabled = false;
         saveBtn.textContent = esc(isReceive ? t('saveUpdateStockBtn') : t('saveBtn'));
       });
     };

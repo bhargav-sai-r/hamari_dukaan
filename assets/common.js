@@ -31,6 +31,47 @@ window.HD_COMMON = (function () {
       if (document.activeElement === inputEl) e.preventDefault();
     }, { passive: false });
   }
+  // Shrinks a photo BEFORE it ever becomes a data URL saved to the
+  // database. A phone camera photo is routinely 2-5MB at full resolution
+  // — far bigger than this app's catalogue grid or item screen ever
+  // displays it — and since photos are stored as text directly inside a
+  // product's row (see the "Important Things to Know" callout in the
+  // deployment guide), every uncompressed photo was quietly eating into
+  // the database's size budget. This resizes the longest side down to
+  // maxDim pixels (plenty for how this app displays photos — a 1:1 tile
+  // in a grid, or a bit bigger on the item screen) and re-encodes as a
+  // JPEG at the given quality, typically shrinking a raw camera photo by
+  // 20-50x with no visible loss for a product-catalogue photo. Note this
+  // always outputs JPEG (drops transparency) — fine for real-world photos
+  // of products, which is all this is ever used for.
+  // Resolves to a data URL, same shape as before — no other code (or the
+  // database column) needs to change to benefit from this.
+  function compressImage(file, maxDim, quality) {
+    maxDim = maxDim || 800;
+    quality = quality || 0.75;
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error('read failed')); };
+      reader.onload = function (e) {
+        var img = new Image();
+        img.onerror = function () { reject(new Error('decode failed')); };
+        img.onload = function () {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          var scale = Math.min(1, maxDim / Math.max(w, h));
+          var outW = Math.max(1, Math.round(w * scale)), outH = Math.max(1, Math.round(h * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = outW; canvas.height = outH;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, outW, outH);
+          try {
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          } catch (err) { reject(err); }
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
   function toast(msg) {
     var el2 = document.getElementById('toast');
     if (!el2) return;
@@ -186,6 +227,15 @@ window.HD_COMMON = (function () {
   // showing whatever was cached the first time it was opened.
   function initUpdateBanner(t) {
     if (!('serviceWorker' in navigator)) return;
+    // Only reload the page when WE'RE the ones who asked the new worker to
+    // take over (the person tapped the "Update available" banner below).
+    // Without this flag, the browser's own "controllerchange" event also
+    // fires on a brand-new visitor's very first load — the service worker
+    // takes control of the page moments after it first paints even though
+    // nothing is being "updated" — which used to silently reload the page
+    // out from under a first-time visitor (e.g. mid-signup, before they'd
+    // typed anything). This makes the reload fire only for a real update.
+    var updateRequested = false;
     navigator.serviceWorker.getRegistration().then(function (reg) {
       if (!reg) return;
       function showBannerFor(worker) {
@@ -193,6 +243,7 @@ window.HD_COMMON = (function () {
         document.body.appendChild(bar);
         requestAnimationFrame(function () { bar.classList.add('show'); });
         bar.onclick = function () {
+          updateRequested = true;
           worker.postMessage({ type: 'SKIP_WAITING' });
         };
       }
@@ -207,7 +258,7 @@ window.HD_COMMON = (function () {
     }).catch(function () {});
     var reloading = false;
     navigator.serviceWorker.addEventListener('controllerchange', function () {
-      if (reloading) return;
+      if (!updateRequested || reloading) return;
       reloading = true;
       location.reload();
     });
@@ -235,6 +286,52 @@ window.HD_COMMON = (function () {
     dlg.onclick = function (e) { if (e.target === dlg) closeOverlay(); };
   }
 
+  // A view-only popup (e.g. "here's the price history") — no Yes/No choice,
+  // just content plus a close control. The close button carries both a ✕
+  // icon and a short word (never icon-only) so it's unambiguous even to
+  // someone who doesn't reliably read symbols. Clicking outside the box
+  // closes it too, same as showConfirm().
+  function showModal(opts) {
+    var root = document.getElementById('overlayRoot');
+    if (!root) return;
+    var dlg = el(
+      '<div class="overlay"><div class="dialog" style="position:relative;">' +
+        '<button type="button" class="modal-close" id="mdClose"><span class="mc-x">✕</span><span class="mc-lbl">' + esc(opts.closeLabel) + '</span></button>' +
+        '<h3>' + esc(opts.title) + '</h3>' +
+        '<div class="modal-body">' + opts.bodyHtml + '</div>' +
+      '</div></div>'
+    );
+    root.innerHTML = ''; root.appendChild(dlg);
+    dlg.querySelector('#mdClose').onclick = closeOverlay;
+    dlg.onclick = function (e) { if (e.target === dlg) closeOverlay(); };
+  }
+
+  // A short list of tappable choices (icon + label each) plus a cancel
+  // row — used where a plain Yes/No confirm doesn't fit, e.g. "how do you
+  // want to add a photo?". opts: { title, actions: [{icon, label, onClick}], cancelLabel }
+  function showActionSheet(opts) {
+    var root = document.getElementById('overlayRoot');
+    if (!root) return;
+    var rowsHtml = opts.actions.map(function (a, i) {
+      return '<button type="button" class="sheet-row" data-i="' + i + '">' +
+        '<span class="sheet-ic">' + esc(a.icon || '') + '</span>' +
+        '<span class="sheet-lbl">' + esc(a.label) + '</span></button>';
+    }).join('');
+    var dlg = el(
+      '<div class="overlay"><div class="dialog">' +
+        (opts.title ? '<h3>' + esc(opts.title) + '</h3>' : '') +
+        '<div class="sheet-rows">' + rowsHtml + '</div>' +
+        '<button type="button" class="btn btn-ghost btn-block" id="shCancel">' + esc(opts.cancelLabel) + '</button>' +
+      '</div></div>'
+    );
+    root.innerHTML = ''; root.appendChild(dlg);
+    opts.actions.forEach(function (a, i) {
+      dlg.querySelector('.sheet-row[data-i="' + i + '"]').onclick = function () { closeOverlay(); a.onClick(); };
+    });
+    dlg.querySelector('#shCancel').onclick = closeOverlay;
+    dlg.onclick = function (e) { if (e.target === dlg) closeOverlay(); };
+  }
+
   return {
     el: el, esc: esc, money: money, qtyLabel: qtyLabel, fmtWhen: fmtWhen,
     placeholderPhoto: placeholderPhoto, disableWheelChange: disableWheelChange,
@@ -242,6 +339,7 @@ window.HD_COMMON = (function () {
     paginate: paginate, pagerRow: pagerRow, showConfirm: showConfirm, closeOverlay: closeOverlay,
     initOfflineBanner: initOfflineBanner, normalizePhone: normalizePhone, debounce: debounce,
     initBackNav: initBackNav, armExitGuard: armExitGuard, confirmExit: confirmExit,
-    initUpdateBanner: initUpdateBanner, validatePhone: validatePhone, phoneErrorKey: phoneErrorKey
+    initUpdateBanner: initUpdateBanner, validatePhone: validatePhone, phoneErrorKey: phoneErrorKey,
+    compressImage: compressImage, showModal: showModal, showActionSheet: showActionSheet
   };
 })();
