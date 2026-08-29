@@ -51,6 +51,11 @@
     scored.sort(function (a, b) { return b.score - a.score || a.s.name.localeCompare(b.s.name); });
     return scored.map(function (x) { return x.s; });
   }
+  // A product the owner has removed from the catalogue shouldn't be
+  // something a worker can still look up and quote a price on. Mirrors
+  // owner.js's isActiveSku — see that file for why "!== false" (older
+  // cached rows have no `active` field at all and should stay visible).
+  function isActiveSku(s) { return s.active !== false; }
   function findSku(id) { return S.skus.filter(function (s) { return s.id === id; })[0]; }
 
   function go(r, patch, opts) {
@@ -201,7 +206,7 @@
     wrap.appendChild(searchWrap);
 
     var q = S.nav.query;
-    var results = filteredSkus(q);
+    var results = filteredSkus(q).filter(isActiveSku);
     if (!S.skus.length) {
       wrap.appendChild(el('<div class="empty-state"><div class="big">🗂️</div><div>' + esc(t('emptyCatalogueWorker')) + '</div></div>'));
     } else if (!results.length) {

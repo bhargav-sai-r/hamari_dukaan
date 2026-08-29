@@ -196,7 +196,11 @@ window.HD_API = (function () {
   }
   function fromDbSku(r) {
     return { id: r.id, name: r.name, description: r.description || '', photo: r.photo_url, unit: r.unit, qty: Number(r.qty),
-      cost: Number(r.cost), sell: Number(r.sell), lastSupplier: r.last_supplier || '', history: historyFromDb(r.history) };
+      cost: Number(r.cost), sell: Number(r.sell), lastSupplier: r.last_supplier || '', history: historyFromDb(r.history),
+      // Older rows from before this column existed come back as undefined
+      // here (not false) if a stale cached copy is ever read — callers
+      // should treat "not exactly false" as active, never bare `.active`.
+      active: r.active !== false };
   }
 
   var api = {
@@ -325,7 +329,8 @@ window.HD_API = (function () {
     insertSku: function (storeId, fields) {
       if (DEMO_MODE) {
         var rec = { id: nextId(demoDb.skus), store_id: storeId, name: fields.name, description: fields.description, photo: fields.photo,
-          unit: fields.unit, qty: fields.qty, cost: fields.cost, sell: fields.sell, lastSupplier: fields.lastSupplier, history: fields.history };
+          unit: fields.unit, qty: fields.qty, cost: fields.cost, sell: fields.sell, lastSupplier: fields.lastSupplier, history: fields.history,
+          active: true };
         demoDb.skus.push(rec);
         saveDemoDb();
         saveSkuPhoto(rec.id, rec.photo, null);
@@ -366,6 +371,26 @@ window.HD_API = (function () {
         }
       });
       return Promise.resolve(optimistic);
+    },
+    // Removes a product from (or brings it back to) the catalogue and
+    // Receive Stock, WITHOUT touching any of its other fields — a plain
+    // ON/OFF flip, deliberately kept completely separate from updateSku()
+    // above. updateSku() always writes a FULL row via toDbSku(), so
+    // reusing it here with a partial {active: ...} fields object would
+    // risk blanking out the product's name/price/history in the same
+    // write. This is intentionally simple: no offline queueing, no
+    // optimistic local update — it just needs a live connection, same as
+    // adding a brand-new product does.
+    setSkuActive: function (id, active) {
+      if (DEMO_MODE) {
+        var rec = demoDb.skus.filter(function (s) { return s.id === id; })[0];
+        if (rec) { rec.active = active; saveDemoDb(); }
+        return Promise.resolve(rec || { id: id, active: active });
+      }
+      return sb.from('skus').update({ active: active }).eq('id', id).select().single().then(function (res) {
+        if (res.error) throw mapErr(res.error);
+        return fromDbSku(res.data);
+      });
     },
     // Demo-mode-only: wipe everything (used by the "Clear all demo data" menu item).
     clearDemoData: function () {

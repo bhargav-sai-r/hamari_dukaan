@@ -61,6 +61,10 @@
     scored.sort(function (a, b) { return b.score - a.score || a.s.name.localeCompare(b.s.name); });
     return scored.map(function (x) { return x.s; });
   }
+  // Older cached/demo rows may not have an `active` field at all (from
+  // before this column existed) — treat "not exactly false" as active, so
+  // nothing already in a browser's storage gets silently hidden.
+  function isActiveSku(s) { return s.active !== false; }
   function findSku(id) { return S.skus.filter(function (s) { return s.id === id; })[0]; }
   function findWorker(id) { return S.workers.filter(function (w) { return w.id === id; })[0]; }
 
@@ -413,20 +417,37 @@
     pinned.onclick = function () { openItem(null, 'catalogue', q); };
     wrap.appendChild(pinned);
 
-    var results = filteredSkus(q);
+    var allMatches = filteredSkus(q);
+    var results = allMatches.filter(isActiveSku);
+    // Removed items only ever resurface when the owner is actively
+    // searching — never while just browsing the catalogue — and only
+    // here in Catalogue (not Receive Stock, per the owner's choice).
+    var archivedMatches = q ? allMatches.filter(function (s) { return !isActiveSku(s); }) : [];
     if (!S.skus.length) {
       wrap.appendChild(el('<div class="empty-state"><div class="big">🗂️</div><div>' + esc(t('emptyCatalogueOwner')) + '</div></div>'));
-    } else if (!results.length) {
-      wrap.appendChild(el('<div class="empty-state">' + esc(t('noMatch', q)) + '</div>'));
+    } else if (!results.length && !archivedMatches.length) {
+      // No active products to show. If this is a plain empty-quotes
+      // situation (nothing searched, everything's been removed), give the
+      // normal "add your first product" message instead of an odd-looking
+      // "No products match \"\" yet." with no search term to point at.
+      wrap.appendChild(q
+        ? el('<div class="empty-state">' + esc(t('noMatch', q)) + '</div>')
+        : el('<div class="empty-state"><div class="big">🗂️</div><div>' + esc(t('emptyCatalogueOwner')) + '</div></div>'));
     } else {
-      if (q) wrap.appendChild(el('<div class="list-caption">' + esc(t('existingMatches')) + '</div>'));
-      var pg = paginate(results, S.nav.page, PAGE_SIZE);
-      var grid = el('<div class="card-grid"></div>');
-      pg.pageItems.forEach(function (s) { grid.appendChild(skuCard(s)); });
-      wrap.appendChild(grid);
-      wrap.appendChild(pagerRow(pg.page, pg.totalPages,
-        function () { S.nav.page--; render(); },
-        function () { S.nav.page++; render(); }, t));
+      if (results.length) {
+        if (q) wrap.appendChild(el('<div class="list-caption">' + esc(t('existingMatches')) + '</div>'));
+        var pg = paginate(results, S.nav.page, PAGE_SIZE);
+        var grid = el('<div class="card-grid"></div>');
+        pg.pageItems.forEach(function (s) { grid.appendChild(skuCard(s)); });
+        wrap.appendChild(grid);
+        wrap.appendChild(pagerRow(pg.page, pg.totalPages,
+          function () { S.nav.page--; render(); },
+          function () { S.nav.page++; render(); }, t));
+      }
+      if (archivedMatches.length) {
+        wrap.appendChild(el('<div class="list-caption removed-caption">' + esc(t('removedProductsHeading')) + '</div>'));
+        archivedMatches.forEach(function (s) { wrap.appendChild(archivedRow(s)); });
+      }
     }
     return wrap;
   }
@@ -435,6 +456,16 @@
     var wrap = el('<div class="search-wrap"><span class="search-icon">🔍</span><input class="input" placeholder="' + esc(t('searchPh')) + '" id="searchInput"></div>');
     var inp = wrap.querySelector('#searchInput');
     inp.value = S.nav.query;
+    if (S.nav.query) {
+      var clearBtn = el('<button type="button" class="search-clear" aria-label="' + esc(t('cancelBtn')) + '">✕</button>');
+      clearBtn.onclick = function () {
+        S.nav.query = ''; S.nav.page = 1; S.nav.receivePage = 1;
+        render();
+        var again = document.getElementById('searchInput');
+        if (again) again.focus();
+      };
+      wrap.appendChild(clearBtn);
+    }
     inp.oninput = function () {
       S.nav.query = inp.value; S.nav.page = 1; S.nav.receivePage = 1;
       debouncedRender();
@@ -453,6 +484,33 @@
     return card;
   }
 
+  // A removed product surfaced in a Catalogue search — tapping it offers
+  // to bring it back, rather than opening the item screen like a normal
+  // match would.
+  function archivedRow(s) {
+    var row = el(
+      '<div class="list-row removed-row"><img class="thumb" src="' + (s.photo || placeholderPhoto()) + '">' +
+      '<div class="info"><div class="name">' + esc(s.name) + '</div><div class="sub removed-caption">' + esc(t('removedBadge')) + '</div></div>' +
+      '<div class="chev">›</div></div>'
+    );
+    row.onclick = function () { reactivateSku(s); };
+    return row;
+  }
+
+  function reactivateSku(s) {
+    showConfirm({
+      title: t('reactivateConfirmTitle'), body: t('reactivateConfirmBody'),
+      confirmLabel: t('reactivateConfirmYes'), cancelLabel: t('cancelBtn'),
+      onConfirm: function () {
+        api.setSkuActive(s.id, true).then(function () {
+          s.active = true;
+          toast(t('reactivatedToast'));
+          render();
+        });
+      }
+    });
+  }
+
   // ----- receive stock -----
   function renderReceiveStock() {
     var wrap = el('<div style="display:flex;flex-direction:column;gap:10px;"></div>');
@@ -467,7 +525,9 @@
     pinned.onclick = function () { openItem(null, 'receive', q); };
     wrap.appendChild(pinned);
 
-    var results = filteredSkus(q);
+    // Removed products never show here at all — not even via search —
+    // since bringing one back is a Catalogue-only action.
+    var results = filteredSkus(q).filter(isActiveSku);
     if (results.length) {
       wrap.appendChild(el('<div class="list-caption">' + esc(q ? t('tapToUpdate') : t('pickFromCatalogue')) + '</div>'));
       var pg = paginate(results, S.nav.receivePage, ROW_PAGE_SIZE);
@@ -746,6 +806,28 @@
 
     var formErr = el('<div class="banner banner-danger" style="display:none;"></div>');
     wrap.appendChild(formErr);
+
+    // Remove-from-catalogue — only for an existing product, and only from
+    // the Catalogue tab (Receive Stock is about updating stock, not
+    // deleting products). Deliberately small/quiet, not a full-width
+    // danger button, since this isn't the main action on this screen.
+    if (!isNew && !isReceive) {
+      var removeLink = el('<button type="button" class="remove-link">' + esc(t('removeFromCatalogueLink')) + '</button>');
+      removeLink.onclick = function () {
+        showConfirm({
+          title: t('removeConfirmTitle'), body: t('removeConfirmBody'),
+          confirmLabel: t('removeConfirmYes'), cancelLabel: t('cancelBtn'), danger: true,
+          onConfirm: function () {
+            api.setSkuActive(s.id, false).then(function () {
+              s.active = false;
+              toast(t('removedToast'));
+              go('catalogue');
+            });
+          }
+        });
+      };
+      wrap.appendChild(removeLink);
+    }
 
     // ---- fixed bottom bar: one green Save + one round Close (✕) ----
     // Replaces the old Save/Cancel/Back row. Save stays greyed out until
