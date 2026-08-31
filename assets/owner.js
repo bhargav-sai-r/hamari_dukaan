@@ -774,11 +774,21 @@
     wrap.appendChild(row2);
     [qtyInp, costInp, sellInp].forEach(disableWheelChange);
 
-    var marginWarn = el('<div class="banner banner-danger" style="display:none;">⚠ ' + esc(t('marginWarn')) + '</div>');
+    // This banner used to be purely advisory — visible the moment the price
+    // looks wrong, but Save would go through anyway. It's now the single
+    // place this message lives: Save actually refuses to proceed while
+    // it's showing (see saveBtn.onclick below), so its wording matches
+    // that ("must be higher... before you can save") instead of the old
+    // softer "double check before saving" — no separate second banner is
+    // shown when Save is blocked, it just draws attention to this one.
+    var marginWarn = el('<div class="banner banner-danger" style="display:none;">⚠ ' + esc(t('marginBlockErr')) + '</div>');
     wrap.appendChild(marginWarn);
-    function checkMargin() {
+    function marginInvalid() {
       var c = parseFloat(costInp.value), sl = parseFloat(sellInp.value);
-      marginWarn.style.display = (!isNaN(c) && !isNaN(sl) && sl <= c) ? 'flex' : 'none';
+      return !isNaN(c) && !isNaN(sl) && sl <= c;
+    }
+    function checkMargin() {
+      marginWarn.style.display = marginInvalid() ? 'flex' : 'none';
     }
     checkMargin();
 
@@ -875,6 +885,14 @@
       var qty = parseFloat(qtyInp.value), cost = parseFloat(costInp.value), sell = parseFloat(sellInp.value);
       if (!name) { formErr.textContent = '⚠ ' + t('nameRequired'); formErr.style.display = 'flex'; return; }
       if (isNaN(qty) || isNaN(cost) || isNaN(sell)) { formErr.textContent = '⚠ ' + t('fieldsRequired'); formErr.style.display = 'flex'; return; }
+      // The margin banner above used to be purely a visual warning — it
+      // never actually stopped a bad save from going through. Selling at
+      // or below cost is now a hard validation failure, same as a missing
+      // name or an empty field: Save refuses to proceed until the price is
+      // fixed. It's already showing the reason (checkMargin() keeps it in
+      // sync with these same fields), so this just makes sure the person
+      // notices it rather than adding a second, redundant message.
+      if (marginInvalid()) { marginWarn.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
       var now = new Date();
       var supplierVal = supplierInp ? supplierInp.value.trim() : '';
       var histEntry = { when: now, qty: qty, cost: cost, sell: sell, supplier: supplierVal };
@@ -932,6 +950,7 @@
 
   C.initOfflineBanner(t);
   C.initUpdateBanner(t);
+  C.initInstallPrompt(t);
   C.initBackNav(handleBack);
   boot();
 })();

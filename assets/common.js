@@ -264,6 +264,85 @@ window.HD_COMMON = (function () {
     });
   }
 
+  // ---------------- install-app banner ----------------
+  // Chrome/Edge/Android decide entirely on their own, using internal
+  // heuristics, when (and whether) to show their built-in "Add to Home
+  // screen" mini-banner — in practice this often means it shows once,
+  // ever, on a device, no matter how many more times someone reopens the
+  // link without actually installing. Capturing the underlying
+  // `beforeinstallprompt` event ourselves and calling preventDefault()
+  // stops that browser-controlled one-off banner, and lets us show our
+  // OWN banner instead — one that reappears on every visit for as long as
+  // the app hasn't been installed yet, which is what a first-time,
+  // unfamiliar-with-PWAs shopkeeper actually needs. Nothing here is
+  // stored in localStorage on purpose: a "closed for now" tap only hides
+  // it for the rest of this page view, never permanently — the very next
+  // time the link is opened, it's back, right up until install.
+  //
+  // iOS Safari never fires beforeinstallprompt at all (an Apple platform
+  // restriction, not something any web page can work around) and there is
+  // no way to trigger the Add to Home Screen action or detect that it
+  // happened from page code — so on iOS this shows a plain instructional
+  // banner instead, on every visit, for as long as the page isn't already
+  // running as an installed app.
+  function initInstallPrompt(t) {
+    // Already launched from a home-screen icon (installed) on either
+    // platform's way of reporting it — nothing left to prompt for.
+    if ((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true) return;
+
+    var bar = null;
+    function positionBar() {
+      if (!bar) return;
+      // Sits just below the offline banner when that's also showing, so
+      // the two never overlap each other at the top of the screen.
+      var top = (offlineBannerEl && offlineBannerEl.classList.contains('show')) ? offlineBannerEl.offsetHeight : 0;
+      bar.style.top = top + 'px';
+    }
+    function showBar(onTap) {
+      if (bar) return;
+      bar = el(
+        '<div class="install-banner"><span class="install-txt"></span>' +
+        '<button type="button" class="install-btn"></button>' +
+        '<button type="button" class="install-x">✕</button></div>'
+      );
+      bar.querySelector('.install-txt').textContent = t('installBannerText');
+      var btn = bar.querySelector('.install-btn');
+      btn.textContent = t('installBannerBtn');
+      btn.onclick = onTap;
+      // Closing only dismisses THIS page view — nothing is remembered, so
+      // it comes right back on the next visit, by design.
+      bar.querySelector('.install-x').onclick = function () { bar.remove(); bar = null; };
+      document.body.appendChild(bar);
+      positionBar();
+      requestAnimationFrame(function () { if (bar) bar.classList.add('show'); });
+    }
+    window.addEventListener('online', positionBar);
+    window.addEventListener('offline', positionBar);
+
+    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIOS) {
+      showBar(function () {
+        showModal({ title: t('installBannerBtn'), bodyHtml: '<div style="font-size:13.5px;line-height:1.5;">' + esc(t('iosInstallSteps')) + '</div>', closeLabel: t('closeBtn') });
+      });
+      return;
+    }
+
+    var deferred = null;
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      deferred = e;
+      showBar(function () {
+        if (!deferred) return;
+        var toPrompt = deferred;
+        deferred = null;
+        toPrompt.prompt();
+      });
+    });
+    window.addEventListener('appinstalled', function () {
+      if (bar) { bar.remove(); bar = null; }
+    });
+  }
+
   function closeOverlay() {
     var root = document.getElementById('overlayRoot');
     if (root) root.innerHTML = '';
@@ -340,6 +419,7 @@ window.HD_COMMON = (function () {
     initOfflineBanner: initOfflineBanner, normalizePhone: normalizePhone, debounce: debounce,
     initBackNav: initBackNav, armExitGuard: armExitGuard, confirmExit: confirmExit,
     initUpdateBanner: initUpdateBanner, validatePhone: validatePhone, phoneErrorKey: phoneErrorKey,
-    compressImage: compressImage, showModal: showModal, showActionSheet: showActionSheet
+    compressImage: compressImage, showModal: showModal, showActionSheet: showActionSheet,
+    initInstallPrompt: initInstallPrompt
   };
 })();
