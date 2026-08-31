@@ -10,7 +10,7 @@
 // =====================================================================
 "use strict";
 
-var CACHE_VERSION = "hd-shell-v6";
+var CACHE_VERSION = "hd-shell-v7";
 var RUNTIME_CACHE = "hd-runtime-v1";
 
 // Everything needed to fully draw the app with zero network access.
