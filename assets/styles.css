@@ -207,7 +207,7 @@ p.lede{color:var(--ink-muted);font-size:14px;line-height:1.5;margin:0;}
 .history-block{background:var(--surface-muted);border-radius:var(--radius-md);padding:10px 12px;display:flex;flex-direction:column;gap:8px;}
 .history-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;display:flex;flex-direction:column;gap:4px;}
 .history-row .when{font-size:11.5px;color:var(--ink-muted);font-weight:700;}
-.history-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:1px;}
+.history-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:1px;}
 .history-grid .cell .k{font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.02em;}
 .history-grid .cell .v{font-weight:700;font-variant-numeric:tabular-nums;font-size:13px;}
 
@@ -218,6 +218,37 @@ p.lede{color:var(--ink-muted);font-size:14px;line-height:1.5;margin:0;}
 .margin-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 9px;margin-top:5px;}
 .margin-chip.good{background:var(--success-bg);color:var(--success);}
 .margin-chip.bad{background:var(--danger-bg);color:var(--danger);}
+
+/* Total Qty at zero or below — a visible flag (not a block) that stock
+   and actual sales have drifted apart, e.g. from oversold Bikri entries
+   or a missed Receive Stock update. */
+.qty-negative{color:var(--danger)!important;font-weight:700;}
+
+.receive-fresh-caption{background:var(--surface-muted);border-radius:var(--radius-sm);padding:8px 10px;margin:-2px 0 2px;}
+
+/* Interactive tour — sits above everything, including the modal/confirm
+   overlay layer (z-index:100), since a few steps spotlight a button
+   inside an open popup (e.g. the Bikri confirm popup's own Confirm
+   button). pointer-events:none on the root+dim layer means every tap
+   passes straight through to the real app underneath except the bubble
+   itself, so the highlighted element stays perfectly tappable. */
+#hdTourRoot{position:fixed;inset:0;z-index:200;pointer-events:none;}
+#hdTourDim{position:fixed;pointer-events:none;border-radius:12px;
+  box-shadow:0 0 0 9999px rgba(0,0,0,.62);transition:left .2s ease,top .2s ease,width .2s ease,height .2s ease;display:none;}
+#hdTourBubble{position:fixed;pointer-events:auto;background:var(--surface);color:var(--ink);
+  border-radius:var(--radius-lg);padding:16px;width:min(320px,calc(100vw - 24px));box-shadow:0 10px 30px rgba(0,0,0,.3);}
+#hdTourBubble.hd-tour-centered{top:50%!important;left:50%!important;transform:translate(-50%,-50%);text-align:center;}
+.hd-tour-x{position:absolute;top:8px;right:8px;background:none;border:none;font-size:15px;color:var(--ink-muted);cursor:pointer;padding:4px;line-height:1;}
+.hd-tour-counter{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-muted);margin-bottom:6px;}
+.hd-tour-title{font-family:var(--font-display);font-weight:700;font-size:18px;margin-bottom:8px;}
+.hd-tour-text{font-size:14px;line-height:1.5;margin-bottom:12px;}
+.hd-tour-next{margin-top:2px;}
+
+/* Bikri (sale-recording) tab */
+.bikri-row .info{display:flex;flex-direction:column;}
+.bikri-row .bikri-qty-inp{width:76px;flex-shrink:0;text-align:right;padding:9px 8px;font-size:14.5px;}
+.bikri-row .bikri-amount{font-size:11px;color:var(--success);font-weight:700;margin-top:2px;}
+.bikri-row.bikri-noted{border-color:var(--primary);background:var(--surface-muted);}
 
 .tabbar{display:flex;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 9px;cursor:pointer;color:var(--ink-muted);}

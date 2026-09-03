@@ -346,6 +346,11 @@ window.HD_COMMON = (function () {
   function closeOverlay() {
     var root = document.getElementById('overlayRoot');
     if (root) root.innerHTML = '';
+    // The tour's own onRender() hook only fires from owner.js's render(),
+    // which never touches #overlayRoot — so every place that opens or
+    // closes something in #overlayRoot calls this too, letting the tour
+    // notice and relocate whenever a popup appears or disappears.
+    if (window.HD_TOUR) window.HD_TOUR.onRender();
   }
   function showConfirm(opts) {
     var root = document.getElementById('overlayRoot');
@@ -363,6 +368,7 @@ window.HD_COMMON = (function () {
     dlg.querySelector('#ovCancel').onclick = closeOverlay;
     dlg.querySelector('#ovConfirm').onclick = function () { closeOverlay(); opts.onConfirm(); };
     dlg.onclick = function (e) { if (e.target === dlg) closeOverlay(); };
+    if (window.HD_TOUR) window.HD_TOUR.onRender();
   }
 
   // A view-only popup (e.g. "here's the price history") — no Yes/No choice,
@@ -383,6 +389,7 @@ window.HD_COMMON = (function () {
     root.innerHTML = ''; root.appendChild(dlg);
     dlg.querySelector('#mdClose').onclick = closeOverlay;
     dlg.onclick = function (e) { if (e.target === dlg) closeOverlay(); };
+    if (window.HD_TOUR) window.HD_TOUR.onRender();
   }
 
   // A short list of tappable choices (icon + label each) plus a cancel
@@ -409,6 +416,7 @@ window.HD_COMMON = (function () {
     });
     dlg.querySelector('#shCancel').onclick = closeOverlay;
     dlg.onclick = function (e) { if (e.target === dlg) closeOverlay(); };
+    if (window.HD_TOUR) window.HD_TOUR.onRender();
   }
 
   return {

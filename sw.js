@@ -10,7 +10,7 @@
 // =====================================================================
 "use strict";
 
-var CACHE_VERSION = "hd-shell-v7";
+var CACHE_VERSION = "hd-shell-v8";
 var RUNTIME_CACHE = "hd-runtime-v1";
 
 // Everything needed to fully draw the app with zero network access.
@@ -28,6 +28,7 @@ var SHELL_ASSETS = [
   "./assets/i18n.js",
   "./assets/common.js",
   "./assets/api.js",
+  "./assets/tour.js",
   "./assets/owner.js",
   "./assets/worker.js",
   "./assets/icons/owner-192.png",

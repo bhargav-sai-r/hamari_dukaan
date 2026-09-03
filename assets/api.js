@@ -40,7 +40,8 @@ window.HD_API = (function () {
       var raw = localStorage.getItem(DEMO_DB_KEY);
       db = raw ? JSON.parse(raw) : { owners: [], stores: [], workers: [], skus: [] };
     } catch (e) { db = { owners: [], stores: [], workers: [], skus: [] }; }
-    db.owners = db.owners || []; db.stores = db.stores || []; db.workers = db.workers || []; db.skus = db.skus || [];
+    db.owners = db.owners || []; db.stores = db.stores || []; db.workers = db.workers || []; db.skus = db.skus || []; db.sales = db.sales || [];
+    (db.sales || []).forEach(function (r) { r.recorded_at = new Date(r.recorded_at); });
     (db.skus || []).forEach(function (s) {
       // Dates don't survive JSON round-trips — rehydrate sku history.
       s.history = (s.history || []).map(function (h) {
@@ -58,6 +59,11 @@ window.HD_API = (function () {
         skus: demoDb.skus.map(function (s) {
           var copy = {}; for (var k in s) if (k !== 'photo') copy[k] = s[k];
           return copy;
+        }),
+        sales: demoDb.sales.map(function (r) {
+          return { id: r.id, store_id: r.store_id, sku_id: r.sku_id, sku_name: r.sku_name, qty: r.qty,
+            unit: r.unit, sale_price: r.sale_price, line_total: r.line_total,
+            recorded_at: r.recorded_at instanceof Date ? r.recorded_at.toISOString() : r.recorded_at };
         })
       };
       localStorage.setItem(DEMO_DB_KEY, JSON.stringify(slim));
@@ -192,15 +198,25 @@ window.HD_API = (function () {
   }
   function toDbSku(f) {
     return { name: f.name, description: f.description || '', photo_url: f.photo, unit: f.unit, qty: f.qty, cost: f.cost, sell: f.sell,
+      mrp: (f.mrp === '' || f.mrp === undefined) ? null : f.mrp,
       last_supplier: f.lastSupplier || '', history: historyForDb(f.history) };
   }
   function fromDbSku(r) {
     return { id: r.id, name: r.name, description: r.description || '', photo: r.photo_url, unit: r.unit, qty: Number(r.qty),
-      cost: Number(r.cost), sell: Number(r.sell), lastSupplier: r.last_supplier || '', history: historyFromDb(r.history),
+      cost: Number(r.cost), sell: Number(r.sell),
+      // MRP is nullable at the database level (see round 4.9's migration) —
+      // an older product that predates this field simply has no MRP yet,
+      // which is a real, valid state (not zero) until someone edits it.
+      mrp: (r.mrp === null || r.mrp === undefined) ? null : Number(r.mrp),
+      lastSupplier: r.last_supplier || '', history: historyFromDb(r.history),
       // Older rows from before this column existed come back as undefined
       // here (not false) if a stale cached copy is ever read — callers
       // should treat "not exactly false" as active, never bare `.active`.
       active: r.active !== false };
+  }
+  function fromDbSale(r) {
+    return { id: r.id, storeId: r.store_id, skuId: r.sku_id, skuName: r.sku_name, qty: Number(r.qty),
+      unit: r.unit, salePrice: Number(r.sale_price), lineTotal: Number(r.line_total), recordedAt: new Date(r.recorded_at) };
   }
 
   var api = {
@@ -329,7 +345,8 @@ window.HD_API = (function () {
     insertSku: function (storeId, fields) {
       if (DEMO_MODE) {
         var rec = { id: nextId(demoDb.skus), store_id: storeId, name: fields.name, description: fields.description, photo: fields.photo,
-          unit: fields.unit, qty: fields.qty, cost: fields.cost, sell: fields.sell, lastSupplier: fields.lastSupplier, history: fields.history,
+          unit: fields.unit, qty: fields.qty, cost: fields.cost, sell: fields.sell, mrp: (fields.mrp === '' || fields.mrp === undefined) ? null : fields.mrp,
+          lastSupplier: fields.lastSupplier, history: fields.history,
           active: true };
         demoDb.skus.push(rec);
         saveDemoDb();
@@ -347,7 +364,9 @@ window.HD_API = (function () {
         var rec = demoDb.skus.filter(function (s) { return s.id === id; })[0];
         var prevPhoto = rec ? rec.photo : null;
         if (rec) { rec.name = fields.name; rec.description = fields.description; rec.photo = fields.photo; rec.unit = fields.unit;
-          rec.qty = fields.qty; rec.cost = fields.cost; rec.sell = fields.sell; rec.lastSupplier = fields.lastSupplier; rec.history = fields.history; }
+          rec.qty = fields.qty; rec.cost = fields.cost; rec.sell = fields.sell;
+          rec.mrp = (fields.mrp === '' || fields.mrp === undefined) ? null : fields.mrp;
+          rec.lastSupplier = fields.lastSupplier; rec.history = fields.history; }
         saveDemoDb();
         saveSkuPhoto(id, fields.photo, prevPhoto);
         return Promise.resolve(rec);
@@ -392,9 +411,89 @@ window.HD_API = (function () {
         return fromDbSku(res.data);
       });
     },
+    // ---- Bikri (sale recording) ----
+    // Commits a whole batch — every product the owner typed a quantity
+    // for in one sitting — as a single unit. `lines` is
+    // [{ id, name, unit, qty, sellPrice }, …] where qty is how many were
+    // sold and sellPrice is that product's CURRENT selling price (snapshot
+    // at the moment of recording, so a later price change never rewrites
+    // history). In real mode this calls one RPC that does the qty
+    // subtraction and the permanent sales-log insert together as one
+    // all-or-nothing database transaction, and subtracts from the qty
+    // Supabase has RIGHT NOW rather than a number the app read a moment
+    // earlier — see record_sales() in the SQL migration for why that
+    // matters when more than one person might be recording sales around
+    // the same time.
+    // Returns [{id, newQty}, …] — one entry per line — for BOTH modes
+    // uniformly, so owner.js can just ASSIGN each product's new qty from
+    // this result and never has to subtract qty itself. That used to be a
+    // real bug: in demo mode, listSkus() hands back the ACTUAL objects
+    // from demoDb.skus (not copies), so S.skus entries are the very same
+    // objects as demoDb.skus entries — subtracting once here AND once in
+    // owner.js silently double-decremented stock on every sale.
+    //
+    // In real mode the new qty comes straight back from the record_sales()
+    // RPC, which computed it from the CURRENT server-side value at update
+    // time (not a number read a moment earlier) — so this is the true
+    // post-sale balance even if someone else changed stock a second ago.
+    // Demo mode has no concurrent-writer concern, so it computes the same
+    // shape locally from each line's `currentQty` (captured by
+    // currentBikriLines() right when the batch was built).
+    recordSales: function (storeId, lines) {
+      if (DEMO_MODE) {
+        var now = new Date();
+        var results = lines.map(function (line) {
+          return { id: line.id, newQty: (Number(line.currentQty) || 0) - line.qty };
+        });
+        lines.forEach(function (line) {
+          var rec = demoDb.skus.filter(function (s) { return s.id === line.id; })[0];
+          var r = results.filter(function (x) { return x.id === line.id; })[0];
+          if (rec && r) rec.qty = r.newQty;
+          demoDb.sales.push({
+            id: nextId(demoDb.sales), store_id: storeId, sku_id: line.id, sku_name: line.name,
+            qty: line.qty, unit: line.unit, sale_price: line.sellPrice, line_total: line.qty * line.sellPrice,
+            recorded_at: now
+          });
+        });
+        saveDemoDb();
+        return Promise.resolve(results);
+      }
+      var payload = lines.map(function (line) {
+        return { sku_id: line.id, sku_name: line.name, qty: line.qty, unit: line.unit, sale_price: line.sellPrice };
+      });
+      return sb.rpc('record_sales', { p_store_id: storeId, p_lines: payload }).then(function (res) {
+        if (res.error) throw mapErr(res.error);
+        return (res.data || []).map(function (row) {
+          return { id: row.sku_id, newQty: Number(row.new_qty) };
+        });
+      });
+    },
+    // Every sale recorded today for this store — backs the "Aaj ka Bikri"
+    // summary button on the Bikri tab. "Today" is this device's local
+    // calendar day, converted to a UTC range for the query, so it lines
+    // up with how the shop actually thinks about "today" regardless of
+    // where the database server itself is.
+    listSalesForToday: function (storeId) {
+      var now = new Date();
+      if (DEMO_MODE) {
+        var todayStr = now.toDateString();
+        var rows = demoDb.sales.filter(function (r) { return r.store_id === storeId && new Date(r.recorded_at).toDateString() === todayStr; });
+        rows.sort(function (a, b) { return new Date(b.recorded_at) - new Date(a.recorded_at); });
+        return Promise.resolve(rows.map(function (r) {
+          return { skuId: r.sku_id, skuName: r.sku_name, qty: r.qty, unit: r.unit, salePrice: r.sale_price, lineTotal: r.line_total, recordedAt: new Date(r.recorded_at) };
+        }));
+      }
+      var startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      var endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+      return sb.from('sales').select('*').eq('store_id', storeId).gte('recorded_at', startOfDay).lt('recorded_at', endOfDay)
+        .order('recorded_at', { ascending: false }).then(function (res) {
+          if (res.error) throw mapErr(res.error);
+          return (res.data || []).map(fromDbSale);
+        });
+    },
     // Demo-mode-only: wipe everything (used by the "Clear all demo data" menu item).
     clearDemoData: function () {
-      demoDb = { owners: [], stores: [], workers: [], skus: [] };
+      demoDb = { owners: [], stores: [], workers: [], skus: [], sales: [] };
       try {
         localStorage.removeItem(DEMO_DB_KEY);
         Object.keys(localStorage).forEach(function (k) {

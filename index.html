@@ -28,11 +28,14 @@
 <div class="toast" id="toast"></div>
 <div id="overlayRoot"></div>
 
-<!-- Load order matters: config -> i18n -> common -> api -> owner -->
+<!-- Load order matters: config -> i18n -> common -> api -> tour -> owner
+     (tour.js must exist as window.HD_TOUR before owner.js's boot() runs,
+     since owner.js checks for it as soon as it starts rendering) -->
 <script src="assets/config.js"></script>
 <script src="assets/i18n.js"></script>
 <script src="assets/common.js"></script>
 <script src="assets/api.js"></script>
+<script src="assets/tour.js"></script>
 <script src="assets/owner.js"></script>
 
 <!-- Registers the offline/installable app-shell cache (sw.js at the site root). Safe to leave in even before you deploy to GitHub Pages. -->

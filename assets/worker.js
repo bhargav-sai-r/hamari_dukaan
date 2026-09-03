@@ -250,6 +250,7 @@
 
   C.initOfflineBanner(t);
   C.initUpdateBanner(t);
+  C.initInstallPrompt(t);
   C.initBackNav(handleBack);
   boot();
 })();
