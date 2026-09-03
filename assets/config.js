@@ -10,8 +10,8 @@
 window.HD_CONFIG = (function () {
   "use strict";
 
-  var SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL_HERE";
-  var SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
+  var SUPABASE_URL = "https://ncgcojovlsbntuugqgts.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_2QDKx5J4QO9tYcJB8wOxtA_Zkfqz4NH";
 
   // Treat anything that isn't a real-looking "https://...supabase.co"-style
   // URL as "not configured yet" and fall back to demo mode, rather than
