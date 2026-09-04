@@ -90,8 +90,14 @@ window.HD_TOUR = (function () {
       } },
     { id: 'receive-save', target: '[data-tour="save-btn"]', gate: 'click', text: 'tourStep6' },
     { id: 'tab-bikri', target: '[data-tour="tab-bikri"]', gate: 'signal', signalName: 'tab:bikri', text: 'tourStep10' },
-    { id: 'bikri-row', target: function () { return trackedRowSel() + ' .bikri-qty-inp'; }, gate: 'signal', signalName: 'bikri:qty-entered', text: 'tourStep11',
-      matchPayload: function (p) { return p && p.id === state.trackedSkuId; } },
+    // round 4.10: typing alone no longer commits a sale — tapping the row's
+    // own OK button does, so this is a plain click gate (like save-product/
+    // receive-save) rather than a signal. The button starts disabled and
+    // only becomes clickable once something's actually been typed, which
+    // naturally sequences "type '2'" before "tap OK" without needing a
+    // separate poll step in between.
+    { id: 'bikri-row', target: function () { return trackedRowSel() + ' .bikri-ok-btn'; }, gate: 'click', text: 'tourStep11' },
+    { id: 'bikri-noted-confirm', target: '[data-tour="sales-noted-heading"]', gate: 'next', text: 'tourStep12' },
     { id: 'bikri-cancel-info', target: '[data-tour="bikri-cancel-btn"]', gate: 'next', text: 'tourStep13' },
     { id: 'bikri-record', target: '[data-tour="record-sales-btn"]', gate: 'click', text: 'tourStep14' },
     { id: 'bikri-confirm', target: '#bkConfirm', gate: 'click', text: 'tourStep15' },

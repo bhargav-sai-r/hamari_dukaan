@@ -14,6 +14,8 @@
   --danger-bg:#FFE9E9;
   --success:#2FA84F;
   --success-bg:#E4F7E9;
+  --cost-bg:#FFF6D8;
+  --cost-border:#E8CD7A;
   --shadow:0 2px 10px rgba(0,0,0,0.08);
   --radius-lg:16px;
   --radius-md:12px;
@@ -27,6 +29,7 @@
     --ink:#F5F5F5; --ink-muted:#A8A8A8; --border:#262626;
     --primary:#3897F0; --primary-ink:#FFFFFF; --accent-text:#E1306C;
     --danger:#FF4747; --danger-bg:#3A1414; --success:#4ADE80; --success-bg:#12301C;
+    --cost-bg:#3A2E0A; --cost-border:#6B5518;
     --shadow:0 2px 14px rgba(0,0,0,0.6);
   }
 }
@@ -35,6 +38,7 @@
   --ink:#F5F5F5; --ink-muted:#A8A8A8; --border:#262626;
   --primary:#3897F0; --primary-ink:#FFFFFF; --accent-text:#E1306C;
   --danger:#FF4747; --danger-bg:#3A1414; --success:#4ADE80; --success-bg:#12301C;
+  --cost-bg:#3A2E0A; --cost-border:#6B5518;
   --shadow:0 2px 14px rgba(0,0,0,0.6);
 }
 
@@ -84,6 +88,20 @@ p.lede{color:var(--ink-muted);font-size:14px;line-height:1.5;margin:0;}
 
 .field{display:flex;flex-direction:column;gap:6px;}
 .label{font-size:12.5px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.02em;}
+
+/* Cost / Selling / MRP shown as three colour-coded cards in one row
+   (round 4.10) — a soft tint per role (Cost=yellow, Selling=green,
+   MRP=grey/neutral, since it's a printed fact rather than a decision),
+   never a popup/shadow, just a visually distinct card. The same three
+   colour classes (.pc-cost/.pc-sell/.pc-mrp) are reused on the Price
+   History popup's grid cells so the same colour always means the same
+   thing everywhere in the app. */
+.price-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+.price-card{border-radius:var(--radius-md);padding:9px 9px 10px;border:1.5px solid transparent;}
+.price-card .label{font-size:10.5px;white-space:nowrap;}
+.pc-cost{background:var(--cost-bg);border-color:var(--cost-border);}
+.pc-sell{background:var(--success-bg);border-color:var(--success);}
+.pc-mrp{background:var(--surface-muted);border-color:var(--border);}
 .input,.select,.textarea{border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px;
   font-size:15.5px;color:var(--ink);background:var(--surface);width:100%;}
 .input:focus,.select:focus,.textarea:focus{outline:2px solid var(--primary);outline-offset:1px;}
@@ -208,8 +226,16 @@ p.lede{color:var(--ink-muted);font-size:14px;line-height:1.5;margin:0;}
 .history-row{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;display:flex;flex-direction:column;gap:4px;}
 .history-row .when{font-size:11.5px;color:var(--ink-muted);font-weight:700;}
 .history-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:1px;}
+.history-grid .cell{padding:4px 5px;border-radius:8px;border:1px solid transparent;}
 .history-grid .cell .k{font-size:10px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.02em;}
 .history-grid .cell .v{font-weight:700;font-variant-numeric:tabular-nums;font-size:13px;}
+/* Below ~420px wide, 4 equal columns leaves no room for a header like
+   "SELLING PRICE" to sit on one line (round 4.10 fix) — switch to a
+   2x2 grid instead of shrinking text further, which stays legible at
+   any phone width rather than a font-size gamble. */
+@media (max-width:420px){
+  .history-grid{grid-template-columns:repeat(2,1fr);gap:6px;}
+}
 
 .stat-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .stat-box{background:var(--surface-muted);border-radius:var(--radius-md);padding:9px 11px;}
@@ -245,10 +271,23 @@ p.lede{color:var(--ink-muted);font-size:14px;line-height:1.5;margin:0;}
 .hd-tour-next{margin-top:2px;}
 
 /* Bikri (sale-recording) tab */
-.bikri-row .info{display:flex;flex-direction:column;}
-.bikri-row .bikri-qty-inp{width:76px;flex-shrink:0;text-align:right;padding:9px 8px;font-size:14.5px;}
+.bikri-row .info{display:flex;flex-direction:column;min-width:0;}
+.bikri-row .bikri-qty-inp{width:64px;flex-shrink:0;text-align:right;padding:9px 6px;font-size:14.5px;}
 .bikri-row .bikri-amount{font-size:11px;color:var(--success);font-weight:700;margin-top:2px;}
+.bikri-row .bikri-err{font-size:11px;color:var(--danger);font-weight:700;margin-top:2px;}
 .bikri-row.bikri-noted{border-color:var(--primary);background:var(--surface-muted);}
+/* Explicit confirm button (round 4.10) — typing a number no longer
+   silently commits anything on its own; tapping this is the one action
+   that commits the entry, clears the search box, and redraws the list
+   with Sales Noted at the top. Starts disabled (nothing typed/changed
+   yet) and only enables once the field differs from what's already
+   noted, mirroring the same disabled-until-dirty pattern used by the
+   item screen's Save button. Text label, not icon-only, per this app's
+   general rule for its non-technical audience. */
+.bikri-row .bikri-ok-btn{flex-shrink:0;min-width:38px;height:34px;padding:0 10px;border-radius:999px;border:none;
+  font-family:var(--font-display);font-weight:700;font-size:12.5px;background:var(--success);color:#fff;cursor:pointer;}
+.bikri-row .bikri-ok-btn:disabled{background:var(--surface-muted);color:var(--ink-muted);cursor:default;}
+.bikri-row .bikri-ok-btn:active:not(:disabled){filter:brightness(0.92);}
 
 .tabbar{display:flex;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 9px;cursor:pointer;color:var(--ink-muted);}
@@ -276,10 +315,17 @@ p.lede{color:var(--ink-muted);font-size:14px;line-height:1.5;margin:0;}
 
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;
   z-index:100;padding:20px;}
-.dialog{background:var(--surface);border-radius:var(--radius-lg);padding:20px;width:100%;max-width:340px;
+.dialog{background:var(--surface);border-radius:var(--radius-lg);padding:20px;width:100%;max-width:420px;
   display:flex;flex-direction:column;gap:14px;box-shadow:var(--shadow);}
 .dialog h3{font-family:var(--font-display);font-size:17px;margin:0;}
 .dialog p{margin:0;color:var(--ink-muted);font-size:13.5px;line-height:1.5;}
+/* Narrow phones (round 4.10): give popups more of the screen so grid
+   headers like "SELLING PRICE" have room, instead of staying capped at
+   a fixed width that was really sized for a tablet/desktop viewport. */
+@media (max-width:420px){
+  .overlay{padding:10px;}
+  .dialog{padding:16px;}
+}
 
 /* view-only popup close button — top-right, icon + word, never icon-only */
 .modal-close{position:absolute;top:-12px;right:-12px;background:var(--danger);color:#fff;border:3px solid var(--surface);

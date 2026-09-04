@@ -75,6 +75,15 @@
   function findSku(id) { return S.skus.filter(function (s) { return s.id === id; })[0]; }
   function findWorker(id) { return S.workers.filter(function (w) { return w.id === id; })[0]; }
 
+  // Units that are only ever counted in whole numbers — "2.5 piece" or
+  // "1.5 dozen" doesn't mean anything, unlike "1.5 kg" or "0.5 litre"
+  // which are perfectly normal (round 4.10). Shared by both the item
+  // screen's Total Qty/Rec. Qty validation and the Bikri tab's sold-qty
+  // validation, so the rule can't drift between the two.
+  var WHOLE_UNITS = { piece: true, dozen: true, packet: true };
+  function isWholeUnit(u) { return !!WHOLE_UNITS[u]; }
+  var WHOLE_UNIT_LABEL = { piece: 'Piece', dozen: 'Dozen', packet: 'Packet' };
+
   // go(): every screen change goes through here. Normally it remembers
   // where you came from (so the back button can return to it); pass
   // {resetStack:true} when arriving at a new "home" screen (nothing to
@@ -579,24 +588,29 @@
   }
 
   // ----- bikri (sale recording) -----
-  // Owner-only reconciliation tool: search products, type how many sold,
-  // and submit the whole batch at once. See the round 4.9 design notes in
-  // the project doc for the full reasoning; the short version —
-  //   - "Sales Noted" holds every product with a non-blank typed quantity,
-  //     newest-touched first, and survives clearing/changing the search
-  //     box. "All Products" holds everything else, filtered by search.
+  // Owner-only reconciliation tool: search (or just scroll) to a product,
+  // type how many sold, tap OK, then submit the whole batch at once. See
+  // the round 4.9/4.10 design notes in the project doc for the full
+  // reasoning; the short version —
+  //   - "Sales Noted" holds every product with a committed (OK-confirmed)
+  //     quantity, newest-touched first, and survives clearing/changing the
+  //     search box. "All Products" holds everything else, filtered by
+  //     search.
   //   - Typing updates a live ₹ preview immediately (no re-render, so the
-  //     keyboard/cursor is never disturbed); the row only actually moves
-  //     into "Sales Noted" on blur, and only takes visible effect at the
-  //     next full render (switching tabs, searching, or opening one of
-  //     the confirm popups below) — deliberately NOT re-rendered directly
-  //     from the blur handler itself, since destroying/rebuilding the
-  //     whole screen at that exact moment can eat the very next tap (e.g.
-  //     landing on the Record Sales button) on a phone.
+  //     keyboard/cursor is never disturbed) but commits nothing — only
+  //     tapping OK commits the value, and it does so unconditionally by
+  //     calling render() straight away (round 4.10), which is what makes
+  //     the row jump into "Sales Noted" the instant it's confirmed,
+  //     whether this row was reached by scrolling or by searching. This
+  //     is safe specifically because it's the OK button's OWN click that
+  //     triggers the render — earlier this committed on blur instead,
+  //     which had to avoid calling render() directly since a blur firing
+  //     as a side effect of tapping a DIFFERENT button could rebuild the
+  //     DOM out from under that other button before its own click fired.
+  //     An explicit confirm button has no such race to avoid.
   //   - Record Sales and Cancel both re-read S.nav.bikriPending fresh at
   //     the moment they're tapped — never a stale list captured back when
-  //     the screen was last drawn — so this is correct even if it hasn't
-  //     re-rendered since the last field was filled in.
+  //     the screen was last drawn.
   function currentBikriLines() {
     return Object.keys(S.nav.bikriPending)
       .map(function (idStr) { return { id: Number(idStr), entry: S.nav.bikriPending[idStr] }; })
@@ -674,6 +688,23 @@
     });
   }
 
+  // round 4.10: typing a number in a Bikri row no longer commits anything
+  // by itself — tapping the OK button next to it is the one explicit
+  // action that (a) validates the number, (b) commits it, (c) clears
+  // whatever's in the search box, and (d) redraws the whole tab with
+  // Sales Noted at the top. This replaces the earlier design, where the
+  // entry only quietly committed on blur and only visually moved into
+  // "Sales Noted" the next time something else happened to trigger a
+  // re-render (e.g. a search) — that design existed specifically to
+  // avoid calling render() from inside a blur handler, since a blur
+  // firing as a side effect of tapping a DIFFERENT button risked
+  // rebuilding the DOM out from under that other button before its own
+  // click event had fired. Committing from the OK button's own click
+  // handler sidesteps that risk entirely — there's no other element's
+  // click in flight to race against, so it's safe to render() directly,
+  // and doing so is what makes the "Sales Noted" section populate
+  // immediately regardless of whether this row was reached by scrolling
+  // or by searching, exactly as asked for.
   function bikriRow(s, inNotedSection) {
     var pending = S.nav.bikriPending[s.id];
     var row = el(
@@ -683,14 +714,22 @@
           '<div class="name">' + esc(s.name) + '</div>' +
           '<div class="sub' + (s.qty <= 0 ? ' qty-negative' : '') + '">' + qtyLabel(s.qty, s.unit) + '</div>' +
           '<div class="bikri-amount" style="display:none;"></div>' +
+          '<div class="bikri-err" style="display:none;"></div>' +
         '</div>' +
         '<input class="input bikri-qty-inp" type="number" step="0.01" min="0" inputmode="decimal" placeholder="' + esc(t('soldQtyPh')) + '">' +
+        '<button type="button" class="bikri-ok-btn">' + esc(t('okBtn')) + '</button>' +
       '</div>'
     );
     var inp = row.querySelector('.bikri-qty-inp');
     var amountEl = row.querySelector('.bikri-amount');
-    inp.value = pending ? pending.qty : '';
+    var errEl = row.querySelector('.bikri-err');
+    var okBtn = row.querySelector('.bikri-ok-btn');
+    var committedRaw = pending ? String(pending.qty) : '';
+    inp.value = committedRaw;
     disableWheelChange(inp);
+    // Whole-number-only units (piece/dozen/packet) get the numeric keypad
+    // without a decimal key, same reasoning as the item screen's qty field.
+    if (isWholeUnit(s.unit)) { inp.step = '1'; inp.setAttribute('inputmode', 'numeric'); }
 
     function updatePreview() {
       var v = parseFloat(inp.value);
@@ -701,23 +740,38 @@
         amountEl.style.display = 'none';
       }
     }
+    function refreshOkState() { okBtn.disabled = (inp.value.trim() === committedRaw); }
     updatePreview();
+    refreshOkState();
 
     // Live preview only — deliberately NOT a render() call, so typing
-    // never fights the keyboard/cursor. The row only actually moves
-    // section on blur (see the class comment above renderBikri-adjacent
-    // functions for why).
-    inp.oninput = updatePreview;
-    inp.onblur = function () {
-      var v = parseFloat(inp.value);
-      if (!isNaN(v) && v > 0) {
-        S.nav.bikriPending[s.id] = { qty: inp.value, touchedAt: ++S.nav.bikriTouchSeq };
-        row.classList.add('bikri-noted');
-      } else {
+    // never fights the keyboard/cursor.
+    inp.oninput = function () {
+      updatePreview();
+      errEl.style.display = 'none';
+      refreshOkState();
+    };
+    okBtn.onclick = function () {
+      var raw = inp.value.trim();
+      var v = parseFloat(raw);
+      if (raw === '' || isNaN(v) || v <= 0) {
+        // Blank/zero + OK un-notes the row (puts it back under "All
+        // Products") — the symmetric counterpart to committing a value.
         delete S.nav.bikriPending[s.id];
-        row.classList.remove('bikri-noted');
+        S.nav.query = '';
+        if (window.HD_TOUR) window.HD_TOUR.signal('bikri:qty-entered', { id: s.id });
+        render();
+        return;
       }
+      if (isWholeUnit(s.unit) && v % 1 !== 0) {
+        errEl.textContent = t('wholeUnitErr', WHOLE_UNIT_LABEL[s.unit]);
+        errEl.style.display = 'block';
+        return;
+      }
+      S.nav.bikriPending[s.id] = { qty: raw, touchedAt: ++S.nav.bikriTouchSeq };
+      S.nav.query = '';
       if (window.HD_TOUR) window.HD_TOUR.signal('bikri:qty-entered', { id: s.id });
+      render();
     };
     if (inNotedSection) row.classList.add('bikri-noted');
     return row;
@@ -739,7 +793,7 @@
       .sort(function (a, b) { return S.nav.bikriPending[b].touchedAt - S.nav.bikriPending[a].touchedAt; });
 
     if (notedIds.length) {
-      wrap.appendChild(el('<div class="list-caption">' + esc(t('salesNotedHeading')) + '</div>'));
+      wrap.appendChild(el('<div class="list-caption" data-tour="sales-noted-heading">' + esc(t('salesNotedHeading')) + '</div>'));
       notedIds.forEach(function (idStr) {
         var sku = findSku(Number(idStr));
         if (sku) wrap.appendChild(bikriRow(sku, true));
@@ -759,7 +813,7 @@
     }
 
     var actions = el('<div class="btn-row" data-tour="bikri-actions"></div>');
-    var cancelBtn = el('<button type="button" class="btn btn-ghost">' + esc(t('cancelBtn')) + '</button>');
+    var cancelBtn = el('<button type="button" class="btn btn-ghost" data-tour="bikri-cancel-btn">' + esc(t('cancelBtn')) + '</button>');
     var recordBtn = el('<button type="button" class="btn btn-primary" data-tour="record-sales-btn">' + esc(t('recordSalesBtn')) + '</button>');
     actions.appendChild(cancelBtn); actions.appendChild(recordBtn);
     wrap.appendChild(actions);
@@ -992,9 +1046,9 @@
             return '<div class="history-row"><div class="when">' + fmtWhen(h.when) + (h.supplier ? ' · ' + esc(h.supplier) : '') + '</div>' +
               '<div class="history-grid">' +
                 '<div class="cell"><div class="k">' + esc(t('qtyLabel')) + '</div><div class="v">' + qtyLabel(h.qty, s.unit) + '</div></div>' +
-                '<div class="cell"><div class="k">' + esc(t('costLabel')) + '</div><div class="v">' + money(h.cost) + '</div></div>' +
-                '<div class="cell"><div class="k">' + esc(t('sellLabel')) + '</div><div class="v">' + money(h.sell) + '</div></div>' +
-                '<div class="cell"><div class="k">' + esc(t('mrpLabel')) + '</div><div class="v">' + mrpCell + '</div></div>' +
+                '<div class="cell pc-cost"><div class="k">' + esc(t('costLabel')) + '</div><div class="v">' + money(h.cost) + '</div></div>' +
+                '<div class="cell pc-sell"><div class="k">' + esc(t('sellLabel')) + '</div><div class="v">' + money(h.sell) + '</div></div>' +
+                '<div class="cell pc-mrp"><div class="k">' + esc(t('mrpLabel')) + '</div><div class="v">' + mrpCell + '</div></div>' +
               '</div></div>';
           }).join('');
         }
@@ -1026,12 +1080,25 @@
     unitF.appendChild(unitSel);
     var qtyF = el('<div class="field" data-tour="qty-field"><label class="label">' + esc(isReceive ? t('recQtyLabel') : t('totalQtyLabel')) + '</label></div>');
     // inputmode="decimal" makes phones reliably show the number pad (with
-    // a decimal point) here instead of the full alphabet keyboard.
+    // a decimal point) here instead of the full alphabet keyboard — but
+    // only for units where a decimal actually means something. For a
+    // whole-number-only unit (piece/dozen/packet — round 4.10) this
+    // switches to inputmode="numeric" (hides the decimal key on most
+    // phone keyboards) and step="1", so it's hard to even type a decimal
+    // by mistake; saveBtn.onclick below still hard-blocks one that slips
+    // through some other way (e.g. pasting).
     var qtyInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0">');
     qtyInp.value = original.qty;
     qtyF.appendChild(qtyInp);
     row1.appendChild(unitF); row1.appendChild(qtyF);
     wrap.appendChild(row1);
+
+    function applyQtyStepForUnit() {
+      var whole = isWholeUnit(unitSel.value);
+      qtyInp.step = whole ? '1' : '0.01';
+      qtyInp.setAttribute('inputmode', whole ? 'numeric' : 'decimal');
+    }
+    applyQtyStepForUnit();
 
     // Receive Stock only: every field below starts blank (a fresh entry
     // for THIS batch, not last time's numbers) — this caption exists so
@@ -1048,28 +1115,26 @@
       }
     }
 
-    // MRP + Cost + Selling Price — wrapped together in one container (also
-    // the tour's spotlight target for this whole group, since Save is
-    // gated on all three together) since MRP is the outer bound both
-    // prices are validated against.
-    var priceGroup = el('<div data-tour="price-fields"></div>');
-    var mrpF = el('<div class="field"><label class="label">' + esc(t('mrpLabel')) + '</label></div>');
-    var mrpInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="' + esc(t('mrpPh')) + '" data-tour-field="mrp">');
-    mrpInp.value = original.mrp;
-    mrpF.appendChild(mrpInp);
-    priceGroup.appendChild(mrpF);
-
-    var row2 = el('<div class="row-2"></div>');
-    var costF = el('<div class="field"><label class="label">' + esc(t('costLabel')) + '</label></div>');
+    // Cost / Selling / MRP — one row of three colour-coded cards (round
+    // 4.10: Cost=yellow, Selling=green, MRP=grey/neutral, the same three
+    // colours reused on the Price History popup below so a colour always
+    // means the same thing everywhere). Also the tour's spotlight target
+    // for this whole group, since Save is gated on all three together —
+    // MRP is the outer bound both prices are validated against.
+    var priceGroup = el('<div class="price-row-3" data-tour="price-fields"></div>');
+    var costF = el('<div class="field price-card pc-cost"><label class="label">' + esc(t('costLabelShort')) + '</label></div>');
     var costInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="₹" data-tour-field="cost">');
     costInp.value = original.cost;
     costF.appendChild(costInp);
-    var sellF = el('<div class="field"><label class="label">' + esc(t('sellLabel')) + '</label></div>');
+    var sellF = el('<div class="field price-card pc-sell"><label class="label">' + esc(t('sellLabelShort')) + '</label></div>');
     var sellInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="₹" data-tour-field="sell">');
     sellInp.value = original.sell;
     sellF.appendChild(sellInp);
-    row2.appendChild(costF); row2.appendChild(sellF);
-    priceGroup.appendChild(row2);
+    var mrpF = el('<div class="field price-card pc-mrp"><label class="label">' + esc(t('mrpLabel')) + '</label></div>');
+    var mrpInp = el('<input class="input" type="number" step="0.01" min="0" inputmode="decimal" placeholder="' + esc(t('mrpPh')) + '" data-tour-field="mrp">');
+    mrpInp.value = original.mrp;
+    mrpF.appendChild(mrpInp);
+    priceGroup.appendChild(costF); priceGroup.appendChild(sellF); priceGroup.appendChild(mrpF);
     wrap.appendChild(priceGroup);
     [qtyInp, mrpInp, costInp, sellInp].forEach(disableWheelChange);
 
@@ -1175,7 +1240,7 @@
       return d;
     }
     nameInput.oninput = checkDirty;
-    unitSel.onchange = checkDirty;
+    unitSel.onchange = function () { applyQtyStepForUnit(); checkDirty(); };
     qtyInp.oninput = checkDirty;
     mrpInp.oninput = function () { checkMargin(); checkDirty(); };
     costInp.oninput = function () { checkMargin(); checkDirty(); };
@@ -1196,6 +1261,16 @@
       var qty = parseFloat(qtyInp.value), cost = parseFloat(costInp.value), sell = parseFloat(sellInp.value), mrp = parseFloat(mrpInp.value);
       if (!name) { formErr.textContent = '⚠ ' + t('nameRequired'); formErr.style.display = 'flex'; return; }
       if (isNaN(qty) || isNaN(cost) || isNaN(sell) || isNaN(mrp)) { formErr.textContent = '⚠ ' + t('fieldsRequired'); formErr.style.display = 'flex'; return; }
+      // Round 4.10: a whole-number-only unit (piece/dozen/packet) can't
+      // take a decimal quantity — "2.5 piece" isn't a real amount. Blocks
+      // Save exactly like the other validations above/below it, rather
+      // than silently rounding (rounding would quietly change a number
+      // the person actually typed, which this app avoids everywhere else).
+      if (isWholeUnit(unitSel.value) && qty % 1 !== 0) {
+        formErr.textContent = '⚠ ' + t('wholeUnitErr', WHOLE_UNIT_LABEL[unitSel.value]);
+        formErr.style.display = 'flex';
+        return;
+      }
       // The margin banner above used to be purely a visual warning — it
       // never actually stopped a bad save from going through. An
       // out-of-order price (cost ≤ sell ≤ MRP required) is now a hard

@@ -223,11 +223,16 @@
     return wrap;
   }
 
+  // MRP is stored as null on any product that predates round 4.9's MRP
+  // field — shown as a dash rather than ₹0, since that's not a real price.
+  function mrpDisplay(s) { return (s.mrp === null || s.mrp === undefined || s.mrp === '') ? '—' : money(s.mrp); }
+
   function skuCard(s) {
     var card = el(
       '<div class="sku-card">' +
         '<img class="sku-photo" src="' + (s.photo || placeholderPhoto()) + '">' +
-        '<div class="sku-body"><div class="sku-name">' + esc(s.name) + '</div><div class="sku-price">' + money(s.sell) + '</div></div>' +
+        '<div class="sku-body"><div class="sku-name">' + esc(s.name) + '</div>' +
+          '<div class="sku-price">' + t('spShort') + ' ' + money(s.sell) + ' · ' + t('mrpLabel') + ' ' + mrpDisplay(s) + '</div></div>' +
       '</div>'
     );
     card.onclick = function () { go('item', { editingId: s.id }); };
@@ -241,7 +246,13 @@
     wrap.appendChild(el('<img src="' + (s.photo || placeholderPhoto()) + '" style="width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:14px;background:var(--surface-muted);">'));
     wrap.appendChild(el('<div style="font-family:var(--font-display);font-size:20px;font-weight:700;">' + esc(s.name) + '</div>'));
     if (s.description) wrap.appendChild(el('<div style="font-size:14px;color:var(--ink-muted);line-height:1.5;">' + esc(s.description) + '</div>'));
-    wrap.appendChild(el('<div class="stat-box" style="align-self:flex-start;"><div class="k">' + esc(t('sellStat')) + '</div><div class="v" style="font-size:22px;">' + money(s.sell) + '</div></div>'));
+    // Selling Price and MRP shown side by side, colour-coded the same way
+    // as the owner's screens (green = selling, grey = MRP) so a colour
+    // means the same thing everywhere in the app (round 4.10).
+    var priceRow = el('<div class="stat-row"></div>');
+    priceRow.appendChild(el('<div class="stat-box pc-sell"><div class="k">' + esc(t('sellStat')) + '</div><div class="v">' + money(s.sell) + '</div></div>'));
+    priceRow.appendChild(el('<div class="stat-box pc-mrp"><div class="k">' + esc(t('mrpLabel')) + '</div><div class="v">' + mrpDisplay(s) + '</div></div>'));
+    wrap.appendChild(priceRow);
     var back = el('<button class="btn btn-ghost btn-block">' + esc(t('backBtn')) + '</button>');
     back.onclick = function () { go('catalogue'); };
     wrap.appendChild(back);

@@ -120,6 +120,15 @@ window.HD_I18N = (function () {
                            hi:"Naye batch ke liye fresh entry — purana data History mein saved hai."},
     costLabel: {en:"Cost price", hi:"Kharid Price"},
     sellLabel: {en:"Selling price", hi:"Bikri Price"},
+    // Short forms used only in the compact 3-across Cost/Selling/MRP card
+    // row (round 4.10) — the full labels above stay in use everywhere
+    // there's room for them (e.g. the Price History popup).
+    costLabelShort: {en:"Cost", hi:"Cost"},
+    sellLabelShort: {en:"Selling", hi:"Selling"},
+    spShort: {en:"SP", hi:"SP"},
+    okBtn: {en:"OK", hi:"OK"},
+    wholeUnitErr: {en:"{0} can't be a decimal — please enter a whole number.",
+                   hi:"{0} mein decimal nahi chalega — poora number daalein."},
     supplierLabel: {en:"Supplier name", hi:"Supplier ka Naam"},
     supplierPh: {en:"Who supplied this stock?", hi:"Maal kisne diya?"},
     marginWarn: {en:"Selling price is not higher than cost price — double check before saving.",
@@ -234,8 +243,8 @@ window.HD_I18N = (function () {
                  hi:"Cost, Selling Price aur MRP bhi isi wajah se khaali hain — is batch ke liye inhe fresh bharein."},
     tourStep10: {en:"Whenever something is sold, record it at the end of the day, all at once, in the Bikri tab.",
                  hi:"Jab bhi kuch bikta hai, din khatam hone par ek saath sabhi sales 'Bikri' tab mein record karein."},
-    tourStep11: {en:"This is the same product again. Let's say 2 were sold today — type '2' here.",
-                 hi:"Yeh wahi product hai. Maan lijiye aaj isme se 2 piece bik gaye — yahan '2' likhein."},
+    tourStep11: {en:"This is the same product again. Let's say 2 were sold today — type '2' here, then tap OK.",
+                 hi:"Yeh wahi product hai. Maan lijiye aaj isme se 2 piece bik gaye — yahan '2' likhein, phir OK dabayein."},
     tourStep12: {en:"See how it moved to \"Sales Noted\" at the top? You can keep searching and entering more sales — they'll all stack up here.",
                  hi:"Dekha, yeh \"Sales Noted\" mein upar chala gaya? Aap aur products search karke aur sales note kar sakte hain — sab yahan jama hote jaayenge."},
     tourStep13: {en:"If you enter something by mistake, Cancel discards everything you've typed without saving any of it.",
