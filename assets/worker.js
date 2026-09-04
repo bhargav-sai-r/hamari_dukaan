@@ -32,7 +32,12 @@
     };
   }
   var S = blank();
-  var PAGE_SIZE = 12;
+  // Worker cards show both SP and MRP (round 4.10), which needs more width
+  // per card than the owner catalogue's plain single-price cards — a
+  // 2-column grid instead of 3 (round 4.11), so PAGE_SIZE is reduced to
+  // 8 (2 cols x 4 rows) to keep roughly the same amount of grid visible
+  // per screen before paging, rather than doubling the scroll height.
+  var PAGE_SIZE = 8;
   var route = 'booting';
   var navStack = [];
 
@@ -213,7 +218,7 @@
       wrap.appendChild(el('<div class="empty-state">' + esc(t('noMatch', q)) + '</div>'));
     } else {
       var pg = paginate(results, S.nav.page, PAGE_SIZE);
-      var grid = el('<div class="card-grid"></div>');
+      var grid = el('<div class="card-grid worker-grid"></div>');
       pg.pageItems.forEach(function (s) { grid.appendChild(skuCard(s)); });
       wrap.appendChild(grid);
       wrap.appendChild(pagerRow(pg.page, pg.totalPages,
